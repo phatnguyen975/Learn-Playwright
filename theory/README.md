@@ -194,3 +194,208 @@ To run this specific test:
 ```bash
 npx playwright test tests/phase2-core-mechanics.spec.ts --headed
 ```
+
+## 3. Advanced Automation Scenarios
+
+### 3.1. Handling Complex DOMs (Tabs, Iframes, and Dialogs)
+
+Modern web applications are rarely just a single flat page. Playwright provides native, seamless APIs to handle complex browser environments.
+
+- **System Dialogs (Alerts, Confirms, Prompts):** By default, Playwright auto-dismisses all JavaScript dialogs so they do not block test execution. To interact with them, you must set up an event listener **before** the action that triggers the dialog.
+  - **API:** `page.on('dialog', handler)`
+  - **Actions:** `dialog.accept()`, `dialog.dismiss()`, `dialog.message()`.
+- **Multiple Pages (Tabs/Windows):** When an action opens a new tab, you need to instruct Playwright to wait for that new page event and assign it to a new variable.
+  - **API:** `const [newPage] = await Promise.all([ context.waitForEvent('page'), page.click('a[target="_blank"]') ])`
+- **Iframes:** Playwright treats iframes as isolated documents. You cannot directly query an element inside an iframe from the main page. You must use a `FrameLocator` to enter the iframe's context first.
+  - **API:** `page.frameLocator('#iframe-id').getByRole('button')`
+
+### 3.2. Network Interception & API Mocking
+
+This is one of Playwright's most powerful features. You can intercept network traffic to modify requests, abort them (e.g., block tracking scripts to speed up tests), or mock responses. Mocking is crucial for testing UI edge cases (like server errors or empty states) without needing the backend to actually generate those conditions.
+
+- **Intercepting Requests:** `await page.route(urlPattern, handler)`
+- **Modifying Responses:** `route.fulfill({ status: 500, body: 'Error' })` or `route.fulfill({ json: mockData })`
+- **Continuing Requests:** `route.continue()` (let the request pass through).
+
+### 3.3. Handling File Uploads and Downloads
+
+Playwright handles the native OS file picker dialogues securely without needing external tools.
+
+- **Uploads:** If the page uses standard `<input type="file">`, you can use `locator.setInputFiles('path/to/file')`. If the upload is triggered dynamically and requires waiting for a file chooser event, you use `page.waitForEvent('filechooser')`.
+- **Downloads:** You must wait for the download event to occur, which gives you access to the download object to verify filenames or save the file to a specific path.
+  - **API:** `const download = await page.waitForEvent('download'); await download.saveAs('/path')`.
+
+### 3.4. State Management (Authentication Reusability)
+
+Logging in before every single test makes execution slow. Playwright allows you to log in once, save the authentication state (Cookies, Local Storage, Session Storage) into a JSON file, and then inject that state into a new `BrowserContext` for all subsequent tests.
+
+- **Save State:** `await page.context().storageState({ path: 'auth.json' });`
+- **Use State:** Configure it in `playwright.config.ts` or inject it into specific test files using `test.use({ storageState: 'auth.json' });`.
+
+### 3.5. Practical Exercises
+
+#### Exercise 1: Dialogs, Tabs, and Iframes
+
+Create `tests/phase3-complex-dom.spec.ts`. We will use standard testing grounds for this.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+test.describe("Advanced DOM Handling", () => {
+  test("Handle JavaScript Confirm Dialog", async ({ page }) => {
+    await page.goto("https://the-internet.herokuapp.com/javascript_alerts");
+
+    // Best Practice: Setup the listener BEFORE triggering the action
+    page.on("dialog", async (dialog) => {
+      expect(dialog.message()).toBe("I am a JS Confirm");
+      await dialog.accept(); // Simulate clicking "OK"
+    });
+
+    // Trigger the dialog
+    await page.getByRole("button", { name: "Click for JS Confirm" }).click();
+
+    // Verify the outcome on the page
+    await expect(page.locator("#result")).toHaveText("You clicked: Ok");
+  });
+
+  test("Handle Multiple Tabs", async ({ context, page }) => {
+    await page.goto("https://the-internet.herokuapp.com/windows");
+
+    // Best Practice: Wait for the event and trigger the action concurrently
+    const [newPage] = await Promise.all([
+      context.waitForEvent("page"),
+      page.getByRole("link", { name: "Click Here" }).click(),
+    ]);
+
+    // Wait for the new tab to load
+    await newPage.waitForLoadState();
+
+    // Verify the new tab's content
+    await expect(newPage.getByRole("heading")).toHaveText("New Window");
+
+    // The original page is still accessible
+    await expect(
+      page.getByRole("heading", { name: "Opening a new window" }),
+    ).toBeVisible();
+  });
+});
+```
+
+To run this specific test:
+
+```bash
+npx playwright test tests/phase3-complex-dom.spec.ts --headed
+```
+
+#### Exercise 2: Network Mocking
+
+Create `tests/phase3-network-mocking.spec.ts`. We will intercept an API call to test the UI's empty state.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+test("Mock API to test empty state UI", async ({ page }) => {
+  // Best Practice: Route setup must happen before page navigation
+  await page.route("*/**/api/v1/fruits", async (route) => {
+    // Fulfill the request with an empty array to simulate no data
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([]),
+    });
+  });
+
+  await page.goto("https://demo.playwright.dev/api-mocking/");
+
+  // Because we mocked the API to return no fruits, we assert that the UI handles this correctly
+  // The demo site will show an empty list. We verify no list items exist
+  const fruitList = page.getByRole("listitem");
+  await expect(fruitList).toHaveCount(0);
+});
+```
+
+To run this specific test:
+
+```bash
+npx playwright test tests/phase3-network-mocking.spec.ts --headed
+```
+
+#### Exercise 3: File Upload & Download
+
+Create `tests/phase3-file-transfer.spec.ts`.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+test("Upload a file securely", async ({ page }) => {
+  await page.goto("https://the-internet.herokuapp.com/upload");
+
+  // Best Practice: Use setInputFiles for standard input[type="file"]
+  // Path is relative to the test file execution context
+  await page.locator("#file-upload").setInputFiles("package.json"); // uploading an existing local file
+  await page.getByRole("button", { name: "Upload" }).click();
+
+  await expect(
+    page.getByRole("heading", { name: "File Uploaded!" }),
+  ).toBeVisible();
+  await expect(page.locator("#uploaded-files")).toContainText("package.json");
+});
+```
+
+To run this specific test:
+
+```bash
+npx playwright test tests/phase3-file-transfer.spec.ts --headed
+```
+
+#### Exercise 4: Authentication State Reuse
+
+First, create `tests/phase3-auth-setup.spec.ts` to log in and save the state.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+const authFile = ".auth/user.json";
+
+test("Login and save session state", async ({ page }) => {
+  await page.goto("https://the-internet.herokuapp.com/login");
+
+  await page.getByLabel("Username").fill("tomsmith");
+  await page.getByLabel("Password").fill("SuperSecretPassword!");
+  await page.getByRole("button", { name: "Login" }).click();
+
+  // Assert successful login
+  await expect(page.locator("#flash")).toContainText(
+    "You logged into a secure area!",
+  );
+
+  // Best Practice: Save the storage state (cookies/tokens) to a file
+  await page.context().storageState({ path: authFile });
+});
+```
+
+Then, create `tests/phase3-auth-use.spec.ts` to use that saved state without logging in again.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+// Tell this test file to use the saved state
+test.use({ storageState: ".auth/user.json" });
+
+test("Verify secure area access without logging in again", async ({ page }) => {
+  // Navigate directly to the secure page
+  await page.goto("https://the-internet.herokuapp.com/secure");
+
+  // We should be already logged in based on the injected cookies/storage
+  await expect(
+    page.getByRole("heading", { name: "Secure Area" }),
+  ).toBeVisible();
+});
+```
+
+To run this specific test:
+
+```bash
+npx playwright test tests/phase3-auth-setup.spec.ts --headed
+npx playwright test tests/phase3-auth-use.spec.ts --headed
+```
