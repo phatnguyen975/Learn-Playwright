@@ -56,7 +56,35 @@ Playwright provides powerful, built-in debugging tools:
 - **Trace Viewer:** A post-execution debugging tool. It captures a full "trace" of the test, including DOM snapshots, network requests, console logs, and actions. Run with: `npx playwright show-trace trace.zip`.
 - **UI Mode:** A time-traveling visual interface. It opens a dedicated window where you can run tests, inspect the DOM at any point in time, and edit code. Run with: `npx playwright test --ui`.
 
-### 1.5. Exercise: The First Script
+### 1.5. Global Configuration (`playwright.config.ts`)
+
+At the heart of any production-grade Playwright framework is the `playwright.config.ts` file. This file dictates global behaviors, allowing you to centralize your configuration instead of hardcoding values inside individual tests.
+
+**Core Configuration Concepts:**
+
+- **`baseURL`**: Defining a base URL allows you to use relative paths in your test files (e.g., `await page.goto('/login')` instead of the full URL). This makes switching between staging and production environments seamless.
+- **Timeouts Hierarchy**: Playwright handles timing elegantly through different layers to prevent indefinite hangs:
+  - **Global Timeout**: The absolute maximum time for the entire test run to complete.
+  - **Test Timeout**: Maximum time for a single test to execute (default is 30,000ms).
+  - **Expect Timeout**: Maximum time for `expect()` assertions to retry and succeed (default is 5,000ms).
+  - **Action Timeout**: Maximum time to wait for a locator to become actionable (e.g., waiting for a button to be clickable).
+
+```typescript
+import { defineConfig } from "@playwright/test";
+
+export default defineConfig({
+  timeout: 30000, // Test timeout
+  expect: {
+    timeout: 5000, // Assertion timeout
+  },
+  use: {
+    baseURL: "https://playwright.dev", // Base URL for the framework
+    actionTimeout: 10000, // Actionability timeout
+  },
+});
+```
+
+### 1.6. Exercise: The First Script
 
 Let's apply the core concepts. Open your IDE, create `tests/phase1-example.spec.ts`, and insert this code:
 
@@ -110,6 +138,21 @@ Playwright strongly advocates for testing applications the way real users intera
 
 - **Chaining & Filtering:** You can chain locators to narrow down the search: `page.locator('form').getByRole('button')`. You can also filter: `page.getByRole('listitem').filter({ hasText: 'Product A' })`.
 - **Strictness:** Playwright locators are strict by default. If a locator resolves to multiple elements when an action is performed, Playwright will throw an error to prevent accidental interactions. You must resolve this by using `.first()`, `.last()`, `.nth(index)`, or refining the locator.
+- **Logical Operators (`and`, `or`):** Highly effective for dynamic UI states, such as A/B testing layouts, changing localization, or unpredictable popups.
+  - `locator.or()`: Matches if either of the locators is found.
+    ```typescript
+    // Handles cases where a button might say "Close" OR "Dismiss"
+    const closeBtn = page
+      .getByRole("button", { name: "Close" })
+      .or(page.getByRole("button", { name: "Dismiss" }));
+    ```
+  - `locator.and()`: Matches elements that satisfy both conditions, useful for intersecting generic locators.
+    ```typescript
+    // Finds a button that also has a specific title attribute
+    const submitBtn = page
+      .getByRole("button")
+      .and(page.getByTitle("Submit Form"));
+    ```
 
 ### 2.2. Actions & Interactions
 
@@ -146,7 +189,32 @@ Unlike standard assertions (which evaluate a condition instantly and fail if fal
 **Soft Assertions:** If you want a test to continue running even if an assertion fails (useful for compiling a list of UI issues in one run), use `expect.soft()`:
 `await expect.soft(page.getByText('Bonus')).toBeVisible();`
 
-### 2.4. Exercise: TodoMVC Automation
+### 2.4. Custom Waits & Advanced Assertions
+
+While Playwright's auto-waiting covers 90% of use cases, complex Single Page Applications (SPAs) often require explicit synchronization strategies.
+
+**Custom Waits:**
+
+- `page.waitForLoadState('networkidle')`: Pauses execution until there are no network connections for at least 500ms. Highly useful when navigating to heavy, dynamically loaded pages.
+- `page.waitForResponse(urlOrPredicate)`: Waits for a specific API response to return before proceeding, ensuring the backend has processed an action.
+
+**Advanced Assertions (Polling & Retrying):** Sometimes, a UI action triggers an asynchronous background job (like processing an uploaded file) that takes longer than the standard expect timeout to reflect on the UI.
+
+- `expect.toPass()`: Automatically retries an entire block of code until it succeeds or times out.
+- `expect.poll()`: Periodically polls a synchronous function until it returns the expected condition.
+
+```typescript
+// Example of expect.toPass() for a slow-loading state
+await expect(async () => {
+  const status = await page.getByTestId("processing-status").textContent();
+  expect(status).toBe("Completed");
+}).toPass({
+  timeout: 15000, // Custom timeout for this specific block
+  intervals: [1000, 2000, 5000], // Custom retry intervals
+});
+```
+
+### 2.5. Exercise: TodoMVC Automation
 
 We will use the official Playwright TodoMVC demo application. Create a new file named `tests/phase2-core-mechanics.spec.ts`.
 
@@ -154,8 +222,8 @@ We will use the official Playwright TodoMVC demo application. Create a new file 
 import { test, expect } from "@playwright/test";
 
 test.describe("Phase 2: TodoMVC Core Interactions", () => {
-  // Navigate to the demo application before each test
   test.beforeEach(async ({ page }) => {
+    // Navigate to the demo application before each test
     await page.goto("https://demo.playwright.dev/todomvc/");
   });
 
@@ -240,7 +308,24 @@ Logging in before every single test makes execution slow. Playwright allows you 
 - **Save State:** `await page.context().storageState({ path: 'auth.json' });`
 - **Use State:** Configure it in `playwright.config.ts` or inject it into specific test files using `test.use({ storageState: 'auth.json' });`.
 
-### 3.5. Practical Exercises
+### 3.5. API Testing & UI/API Hybrid Automation
+
+Playwright is not just a browser automation tool; it includes a powerful, built-in `APIRequestContext` to send HTTP(S) requests directly from Node.js.
+
+**Why use API requests in a UI framework?**
+
+- **Direct API Testing:** You can validate REST/GraphQL endpoint responses, status codes, and JSON schemas without opening a browser.
+- **Hybrid Automation (Best Practice):** The most efficient way to test a UI is to use the API to instantly set up the prerequisites (e.g., creating a user, injecting database records) and then use the browser only to verify the final UI state. This drastically reduces execution time and flakiness compared to navigating through multiple setup screens via UI.
+
+### 3.6. Device Emulation & Permissions
+
+Modern web applications are responsive and location-aware. Playwright allows you to simulate various device parameters and grant browser permissions dynamically at the `BrowserContext` level.
+
+- **Viewport & Devices:** You can emulate specific mobile devices (like 'iPhone 13' or 'Pixel 5'), which automatically configures the viewport size, user agent, and touch screen capabilities.
+- **Environment Simulation:** You can set the exact `geolocation` (latitude and longitude), `timezoneId`, and `locale`.
+- **Permissions:** Browsers normally prompt users with a popup when a site requests access to the clipboard, camera, or location. In automation, you bypass this by pre-granting permissions using `context.grantPermissions()`.
+
+### 3.7. Practical Exercises
 
 #### Exercise 1: Dialogs, Tabs, and Iframes
 
@@ -408,27 +493,120 @@ npx playwright test tests/phase3-auth-setup.spec.ts --headed
 npx playwright test tests/phase3-auth-use.spec.ts --headed
 ```
 
+#### Exercise 5: UI/API Hybrid Automation
+
+Create `tests/phase3-hybrid-api.spec.ts`. We will use a public testing API (`reqres.in`) to demonstrate creating data via API and validating the response.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+test.describe("Hybrid API and UI Automation", () => {
+  test("Create a post via API and validate response", async ({ request }) => {
+    // 1. Send a POST request explicitly defining headers and payload
+    // Best Practice: Always define headers explicitly to avoid server rejection (HTTP 400)
+    const response = await request.post(
+      "https://jsonplaceholder.typicode.com/posts",
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        data: {
+          title: "Playwright Automation",
+          body: "Learning Hybrid Testing",
+          userId: 1,
+        },
+      },
+    );
+
+    // 2. Assert the HTTP status code for resource creation
+    expect(response.status()).toBe(201);
+    expect(response.ok()).toBeTruthy();
+
+    // 3. Parse the JSON response body
+    const responseBody = await response.json();
+
+    // 4. Validate the payload structure
+    expect(responseBody.title).toBe("Playwright Automation");
+    expect(responseBody.body).toBe("Learning Hybrid Testing");
+    expect(responseBody).toHaveProperty("id");
+  });
+});
+```
+
+To run this specific test:
+
+```bash
+npx playwright test tests/phase3-hybrid-api.spec.ts --headed
+```
+
+#### Exercise 6: Device Emulation & Geolocation
+
+Create `tests/phase3-emulation.spec.ts`. We will configure the test to simulate a user located in Tokyo, Japan, using a mobile viewport.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+// Best Practice: Apply emulation settings at the test or describe block level
+test.use({
+  geolocation: { latitude: 35.6895, longitude: 139.6917 }, // Tokyo coordinates
+  permissions: ["geolocation"], // Grant GPS access automatically
+  viewport: { width: 390, height: 844 }, // iPhone 12/13 dimensions
+  userAgent:
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
+});
+
+test("Verify geolocation feature on a stable map provider", async ({
+  page,
+}) => {
+  // Navigate to a site dedicated to testing automation
+  await page.goto("https://the-internet.herokuapp.com/geolocation");
+
+  // 1. Trigger the geolocation request by clicking the button
+  await page.getByRole("button", { name: "Where am I?" }).click();
+
+  // 2. Locate the output elements
+  const latValue = page.locator("#lat-value");
+  const longValue = page.locator("#long-value");
+
+  // 3. Assert that the exact injected coordinates are displayed
+  await expect(latValue).toContainText("35.6895");
+  await expect(longValue).toContainText("139.6917");
+});
+```
+
+To run this specific test:
+
+```bash
+npx playwright test tests/phase3-emulation.spec.ts --headed
+```
+
 ## 4. Framework Design & Architecture
 
-### 4.1. Architecture Overview & Folder Structure
+### 4.1. Architecture Overview & Best Practice Folder Structure
 
-As your test suite grows, having locators and actions scattered across multiple test files becomes a maintenance nightmare. A robust automation framework requires a strict separation of concerns.
+As your test suite scales to hundreds of scenarios, having locators and actions scattered across multiple files becomes a maintenance nightmare. A robust, production-grade automation framework requires a strict separation of concerns.
 
-To achieve this, we organize our Playwright project into a specific directory tree. The core logic (Pages and Fixtures) must sit alongside the `tests` directory, not inside it, to ensure the test runner only executes actual test specs.
+To achieve this, we organize our Playwright project into a specific directory tree. The core logic (Pages, Fixtures, Utils) must sit alongside the `tests` directory, not inside it.
 
-**Standard Framework Directory Tree:**
+**Standard Enterprise Framework Directory Tree:**
 
 ```text
 playwright-automation-project/
-├── fixtures/                  # Custom fixtures for setup/teardown
-│   └── pomFixture.ts
-├── pages/                     # Page Object Model classes (UI Logic)
-│   └── SearchPage.ts
-├── tests/                     # Executable test scenarios (Test Logic)
-│   ├── phase4-pom-architecture.spec.ts
-│   └── phase4-data-driven.spec.ts
-├── playwright.config.ts       # Global framework configuration
-└── package.json
+├── .github/workflows/         # CI/CD pipeline configurations (e.g., GitHub Actions YAML files)
+├── .auth/                     # Ignored in Git. Stores authentication states (cookies/tokens) to bypass login
+├── fixtures/                  # Custom Playwright fixtures for automated setup/teardown and POM injection
+├── pages/                     # Page Object Model (POM) classes containing locators and UI actions
+├── test-data/                 # External data files (JSON, CSV) used for Data-Driven Testing
+├── tests/                     # The actual executable test scenarios (*.spec.ts)
+│   ├── api/                   # API-only tests
+│   ├── e2e/                   # End-to-end UI tests
+│   └── visual/                # Visual regression tests (image comparisons)
+├── utils/                     # Reusable helper functions (e.g., random data generators, date formatters)
+├── .env                       # Ignored in Git. Local environment variables (URLs, secrets, credentials)
+├── .prettierrc                # Formatting rules to enforce code style consistency across the team
+├── playwright.config.ts       # Global Playwright configuration (timeouts, retries, reporters, baseURL)
+└── package.json               # Node.js dependencies and project scripts
 ```
 
 ### 4.2. Page Object Model (POM): Separation of Concerns
@@ -458,7 +636,58 @@ By combining POM with Fixtures, you can automatically inject instantiated Page O
 
 You often need to run the same test scenario with multiple sets of data (e.g., testing search functionality with different keywords, or testing login with various invalid credentials). Playwright natively supports parameterized testing using standard JavaScript `for...of` loops within a `test.describe` block.
 
-### 4.5. Code Standards: Linters and Formatters
+### 4.5. Environment Variables Configuration (`.env`)
+
+Hardcoding URLs, usernames, or passwords directly into your test files is a critical security vulnerability and an anti-pattern. Enterprise frameworks use environment variables to manage different configurations (Dev, Staging, Prod) seamlessly.
+
+We utilize the `dotenv` package to load variables from a `.env` file into `process.env`.
+
+**Setup:**
+
+1. Install the package: `npm install -D dotenv`
+2. Create a `.env` file at the project root:
+
+```env
+BASE_URL=https://staging.playwright.dev
+TEST_USERNAME=admin
+TEST_PASSWORD=SuperSecretPassword!
+```
+
+3. Load it inside your `playwright.config.ts`:
+
+```typescript
+import { defineConfig } from "@playwright/test";
+import * as dotenv from "dotenv";
+
+// Read from default ".env" file.
+dotenv.config();
+
+export default defineConfig({
+  use: {
+    baseURL: process.env.BASE_URL,
+  },
+});
+```
+
+### 4.6. Utilities & Helpers (`utils/`)
+
+Not all code belongs in a Page Object or a Test file. Functions that format dates, generate random strings for unique emails, or parse specific files should be centralized in a `utils/` directory. This keeps your POM classes purely focused on UI interaction.
+
+**Example `utils/DataGenerator.ts`:**
+
+```typescript
+export class DataGenerator {
+  /**
+   * Generates a random email address to bypass unique constraints during registration testing.
+   */
+  static generateRandomEmail(): string {
+    const timestamp = new Date().getTime();
+    return `testuser_${timestamp}@automation.com`;
+  }
+}
+```
+
+### 4.7. Code Standards: Linters and Formatters
 
 Maintaining a clean codebase is critical for a team. To enforce a standard style—specifically the Google Java/JS Style Guide adapted for TypeScript, which strictly enforces a **4-space indentation**—we utilize Prettier and ESLint.
 
@@ -474,7 +703,22 @@ Maintaining a clean codebase is critical for a team. To enforce a standard style
 }
 ```
 
-### 4.6. Practical Exercises
+### 4.8. Playwright CLI Command Cheat Sheet
+
+Mastering the Command Line Interface (CLI) is essential for local debugging and CI/CD execution. Run these commands from your project root.
+
+| Command                                  | Description                                                                                    |
+| :--------------------------------------- | :--------------------------------------------------------------------------------------------- |
+| `npx playwright test`                    | Runs all tests in headless mode (default for CI/CD).                                           |
+| `npx playwright test --headed`           | Runs tests with the browser UI visible.                                                        |
+| `npx playwright test --ui`               | Opens the interactive UI Mode (Best for time-travel debugging and tracing).                    |
+| `npx playwright test --debug`            | Opens the Playwright Inspector to step through code line-by-line.                              |
+| `npx playwright test --project=chromium` | Runs tests only on the specified browser engine.                                               |
+| `npx playwright test file.spec.ts:10`    | Runs a specific test starting at line 10 of `file.spec.ts`.                                    |
+| `npx playwright show-report`             | Opens the HTML report generated from the last test run.                                        |
+| `npx playwright codegen`                 | Opens the Inspector to record your browser actions and generate Playwright code automatically. |
+
+### 4.9. Practical Exercises
 
 #### Exercise 1: Creating a Page Object
 
@@ -611,13 +855,17 @@ npx playwright test tests/phase4-data-driven.spec.ts --headed
 
 ## 5. Execution, CI/CD & Best Practices
 
-### 5.1. Parallel Execution & Sharding
+### 5.1. Parallel Execution, Sharding & Report Merging
 
 Execution speed is critical in a professional CI/CD pipeline. Playwright is designed for speed, utilizing multiple worker processes.
 
-- **Default Behavior:** By default, Playwright runs multiple test _files_ in parallel (using multiple workers), but tests _inside_ a single file run sequentially in the same worker.
+- **Default Behavior:** By default, Playwright runs multiple test _files_ in parallel (using multiple workers), but tests _inside_ a single file run sequentially.
 - **Fully Parallel:** You can force tests within a single file to run in parallel by adding `test.describe.configure({ mode: 'parallel' })`.
-- **Sharding:** When you have thousands of tests, a single machine (even with multiple workers) is not enough. Playwright allows you to split (shard) your test suite across multiple CI machines. For example, `npx playwright test --shard=1/3` runs the first third of the tests on machine 1.
+- **Sharding:** When you have thousands of tests, a single machine is not enough. Playwright allows you to split (shard) your test suite across multiple CI machines. For example, `npx playwright test --shard=1/3` runs the first third of the tests.
+- **Merging Reports (Best Practice):** When you use sharding across multiple CI nodes, each node generates a partial `.zip` blob report. You must collect all these blobs into a single directory on a final CI job and merge them into a unified HTML report:
+  ```bash
+  npx playwright merge-reports --reporter html ./all-blob-reports
+  ```
 
 ### 5.2. Visual Regression Testing
 
@@ -698,12 +946,14 @@ test.describe("Parallel Tests Block", () => {
 });
 ```
 
-#### Exercise 3: Setting up CI/CD (GitHub Actions)
+#### Exercise 3: Enterprise CI/CD Pipeline with Sharding (GitHub Actions)
 
-Create a new YAML file exactly at this path: `.github/workflows/playwright.yml`. If the folders do not exist, create them.
+Running all tests on a single CI machine is a bottleneck. This advanced YAML uses GitHub Actions' `matrix` strategy to spin up 3 separate machines simultaneously (sharding), and a final job to merge their reports.
+
+Create exactly at this path: `.github/workflows/playwright.yml`.
 
 ```yaml
-name: Playwright Tests
+name: Playwright Enterprise Tests
 on:
   push:
     branches: [main]
@@ -711,14 +961,18 @@ on:
     branches: [main]
 
 jobs:
+  # 1. THE TEST JOB (Runs on multiple machines in parallel)
   test:
     timeout-minutes: 60
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3]
+        shardTotal: [3]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: lts/*
 
@@ -728,14 +982,46 @@ jobs:
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps
 
-      - name: Run Playwright tests
-        run: npx playwright test
+      - name: Run Playwright tests (Sharded)
+        # This command uses the matrix variables to split the workload
+        run: npx playwright test --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
-      - name: Upload Playwright HTML Report
-        uses: actions/upload-artifact@v4
+      - name: Upload blob report to GitHub Actions Artifacts
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: playwright-report/
+          name: blob-report-${{ matrix.shardIndex }}
+          path: blob-report
+          retention-days: 1
+
+  # 2. THE MERGE JOB (Runs only after all test machines finish)
+  merge-reports:
+    if: always()
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download all blob reports from previous jobs
+        uses: actions/download-artifact@v4
+        with:
+          path: all-blob-reports
+          pattern: blob-report-*
+          merge-multiple: true
+
+      - name: Merge into single HTML Report
+        run: npx playwright merge-reports --reporter html ./all-blob-reports
+
+      - name: Upload Unified HTML Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-unified-report
+          path: playwright-report
           retention-days: 14
 ```

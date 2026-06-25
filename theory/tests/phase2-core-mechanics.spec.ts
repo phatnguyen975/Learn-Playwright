@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("Phase 2: TodoMVC Core Interactions", () => {
-  // Navigate to the demo application before each test
   test.beforeEach(async ({ page }) => {
+    // Navigate to the demo application before each test
     await page.goto("https://demo.playwright.dev/todomvc/");
   });
 
