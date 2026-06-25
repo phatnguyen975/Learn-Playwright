@@ -399,3 +399,204 @@ To run this specific test:
 npx playwright test tests/phase3-auth-setup.spec.ts --headed
 npx playwright test tests/phase3-auth-use.spec.ts --headed
 ```
+
+## 4. Framework Design & Architecture
+
+### 4.1. Architecture Overview & Folder Structure
+
+As your test suite grows, having locators and actions scattered across multiple test files becomes a maintenance nightmare. A robust automation framework requires a strict separation of concerns.
+
+To achieve this, we organize our Playwright project into a specific directory tree. The core logic (Pages and Fixtures) must sit alongside the `tests` directory, not inside it, to ensure the test runner only executes actual test specs.
+
+**Standard Framework Directory Tree:**
+
+```text
+playwright-automation-project/
+├── fixtures/                  # Custom fixtures for setup/teardown
+│   └── pomFixture.ts
+├── pages/                     # Page Object Model classes (UI Logic)
+│   └── SearchPage.ts
+├── tests/                     # Executable test scenarios (Test Logic)
+│   ├── phase4-pom-architecture.spec.ts
+│   └── phase4-data-driven.spec.ts
+├── playwright.config.ts       # Global framework configuration
+└── package.json
+```
+
+### 4.2. Page Object Model (POM): Separation of Concerns
+
+The Page Object Model (POM) solves maintainability issues by separating the UI structure from the test logic. You create a class for each page (or component). This class encapsulates all the locators and actions for that specific page.
+
+**Key principles of POM in Playwright:**
+
+- Locators are defined in the constructor or as private class properties.
+- Methods represent user actions (e.g., `login(username, password)`, `searchForProduct(item)`).
+- Assertions should generally be kept inside the test files, not in the POM, to maintain clear test intent (though structural assertions like `waitForLoadState` can live in POM).
+
+### 4.3. Playwright Fixtures: The Ultimate Setup/Teardown
+
+While `beforeEach` and `afterEach` hooks are common in standard testing frameworks, Playwright introduces **Fixtures**. Fixtures are isolated environments established for each test.
+
+**Why Fixtures are superior:**
+
+- **Encapsulation:** Setup and teardown logic are combined in one place.
+- **Reusable:** You can define a fixture once and use it across hundreds of test files.
+- **On-Demand (Lazy Loading):** Playwright only sets up the fixture if the specific test asks for it.
+- **Isolation:** Each test gets a fresh instance of the fixture, preventing state leakage.
+
+By combining POM with Fixtures, you can automatically inject instantiated Page Objects directly into your tests!
+
+### 4.4. Data-Driven Testing (Parameterized Tests)
+
+You often need to run the same test scenario with multiple sets of data (e.g., testing search functionality with different keywords, or testing login with various invalid credentials). Playwright natively supports parameterized testing using standard JavaScript `for...of` loops within a `test.describe` block.
+
+### 4.5. Code Standards: Linters and Formatters
+
+Maintaining a clean codebase is critical for a team. To enforce a standard style—specifically the Google Java/JS Style Guide adapted for TypeScript, which strictly enforces a **4-space indentation**—we utilize Prettier and ESLint.
+
+**Example `.prettierrc` for 4-space Google Style:**
+
+```json
+{
+  "tabWidth": 4,
+  "useTabs": false,
+  "singleQuote": true,
+  "trailingComma": "none",
+  "printWidth": 100
+}
+```
+
+### 4.6. Practical Exercises
+
+#### Exercise 1: Creating a Page Object
+
+Create a new folder named `pages` and add the file `pages/SearchPage.ts`.
+
+```typescript
+import { type Page, type Locator } from "@playwright/test";
+
+export class SearchPage {
+  readonly page: Page;
+  readonly searchInput: Locator;
+  readonly searchButton: Locator;
+  readonly searchResults: Locator;
+
+  constructor(page: Page) {
+    this.page = page;
+    // Centralizing locators
+    this.searchInput = page.getByPlaceholder("Search docs");
+    this.searchButton = page.getByRole("button", { name: "Search" });
+    this.searchResults = page.locator(".DocSearch-Hit");
+  }
+
+  async navigate() {
+    await this.page.goto("https://playwright.dev/");
+  }
+
+  async searchFor(query: string) {
+    // Triggering the search modal
+    await this.searchButton.click();
+    // Filling the query
+    await this.searchInput.fill(query);
+  }
+}
+```
+
+#### Exercise 2: Creating a Custom Fixture to Inject the POM
+
+Create a new folder named `fixtures` and add `fixtures/pomFixture.ts`. This is a best practice to avoid using `new SearchPage(page)` in every test.
+
+```typescript
+import { test as baseTest } from "@playwright/test";
+import { SearchPage } from "../pages/SearchPage";
+
+// Declare the types of your fixtures
+type MyFixtures = {
+  searchPage: SearchPage;
+};
+
+// Extend the base test to include our custom fixture
+export const test = baseTest.extend<MyFixtures>({
+  // The fixture definition
+  searchPage: async ({ page }, use) => {
+    // Setup Phase: Instantiate the Page Object
+    const searchPage = new SearchPage(page);
+
+    // Action Phase: Pass the instantiated object to the test
+    await use(searchPage);
+
+    // Teardown Phase (Optional): Runs after the test finishes.
+    // Playwright handles browser teardown natively, but you can add cleanup logic here.
+  },
+});
+
+export { expect } from "@playwright/test";
+```
+
+#### Exercise 3: Using the POM and Fixture in a Test
+
+Create `tests/phase4-pom-architecture.spec.ts`. Notice how clean the test becomes.
+
+```typescript
+// Import our custom test with fixtures, NOT the default @playwright/test
+import { test, expect } from "../fixtures/pomFixture";
+
+test.describe("Architecture Implementation", () => {
+  // We inject 'searchPage' directly into the test arguments!
+  test("Should search for a concept using POM and Fixtures", async ({
+    searchPage,
+  }) => {
+    await searchPage.navigate();
+    await searchPage.searchFor("Locators");
+
+    // Assertions remain in the test file
+    await expect(searchPage.searchResults.first()).toBeVisible();
+    await expect(searchPage.searchResults.first()).toContainText("Locators");
+  });
+});
+```
+
+To run this specific test:
+
+```bash
+npx playwright test tests/phase4-pom-architecture.spec.ts --headed
+```
+
+#### Exercise 4: Data-Driven Testing
+
+Create `tests/phase4-data-driven.spec.ts`.
+
+```typescript
+import { test, expect } from "../fixtures/pomFixture";
+
+// Array of test data (can also be imported from an external .json file)
+const searchData = [
+  { keyword: "Assertions", expectedText: "Assertions" },
+  { keyword: "Fixtures", expectedText: "Fixtures" },
+  { keyword: "Network", expectedText: "Network" },
+];
+
+test.describe("Data-Driven Search Tests", () => {
+  // Loop through the data array to create parameterized tests
+  for (const data of searchData) {
+    // The test name is dynamic based on the data
+    test(`Should display correct results for: ${data.keyword}`, async ({
+      searchPage,
+    }) => {
+      await searchPage.navigate();
+      await searchPage.searchFor(data.keyword);
+
+      // Verify the results contain the expected text
+      await expect(searchPage.searchResults.first()).toContainText(
+        data.expectedText,
+      );
+    });
+  }
+});
+```
+
+To run this specific test:
+
+```bash
+npx playwright test tests/phase4-data-driven.spec.ts --headed
+```
