@@ -6,6 +6,14 @@
   <sub>June 25, 2026</sub>
 </div>
 
+## Table of Contents
+
+1. [Playwright Fundamentals & Environment Setup](#1-playwright-fundamentals--environment-setup)
+2. [Core Concepts (Locators, Actions & Assertions)](#2-core-concepts-locators-actions--assertions)
+3. [Advanced Automation Scenarios](#3-advanced-automation-scenarios)
+4. [Framework Design & Architecture](#4-framework-design--architecture)
+5. [Execution, CI/CD & Best Practices](#5-execution-cicd--best-practices)
+
 ## 1. Playwright Fundamentals & Environment Setup
 
 ### 1.1. Playwright Architecture & Why It Excels
@@ -599,4 +607,135 @@ To run this specific test:
 
 ```bash
 npx playwright test tests/phase4-data-driven.spec.ts --headed
+```
+
+## 5. Execution, CI/CD & Best Practices
+
+### 5.1. Parallel Execution & Sharding
+
+Execution speed is critical in a professional CI/CD pipeline. Playwright is designed for speed, utilizing multiple worker processes.
+
+- **Default Behavior:** By default, Playwright runs multiple test _files_ in parallel (using multiple workers), but tests _inside_ a single file run sequentially in the same worker.
+- **Fully Parallel:** You can force tests within a single file to run in parallel by adding `test.describe.configure({ mode: 'parallel' })`.
+- **Sharding:** When you have thousands of tests, a single machine (even with multiple workers) is not enough. Playwright allows you to split (shard) your test suite across multiple CI machines. For example, `npx playwright test --shard=1/3` runs the first third of the tests on machine 1.
+
+### 5.2. Visual Regression Testing
+
+Functional testing verifies _if_ it works; Visual Regression Testing verifies _how it looks_. Playwright can take screenshots of your pages or components and compare them pixel-by-pixel against a baseline image.
+
+- **API:** `await expect(page).toHaveScreenshot('landing-page.png')`
+- **Workflow:** The first time you run this, it will fail because there is no baseline. Playwright creates the baseline image. On subsequent runs, it compares the new screenshot to the baseline. If they differ (e.g., a button moved, a font changed), the test fails and generates a visual diff.
+
+### 5.3. Artifact Collection & Reporters
+
+When tests run in headless mode on a CI server and fail, you cannot physically see the screen. Playwright automatically collects debugging artifacts based on your `playwright.config.ts` configuration.
+
+- **Traces:** The ultimate debugging tool (captures DOM state, network, console logs).
+- **Videos:** Records a video of the test execution.
+- **Screenshots:** Captures the screen exactly when an assertion fails.
+- **Reporters:** Playwright includes a built-in `html` reporter that bundles all these artifacts into a beautiful, interactive web page.
+
+### 5.4. CI/CD Integration (GitHub Actions)
+
+A framework is useless if it only runs on your local machine. Integrating Playwright into GitHub Actions (or GitLab CI, Jenkins) ensures your tests run automatically on every Pull Request or code push. Playwright runs in `headless` mode (no UI) during CI to maximize performance.
+
+### 5.5. Practical Exercises
+
+#### Exercise 1: Visual Regression Testing
+
+Create a new file `tests/phase5-visual-regression.spec.ts`. We will use the Playwright homepage to detect UI changes.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+test.describe("Visual Regression Testing", () => {
+  test("Verify Playwright Homepage UI remains intact", async ({ page }) => {
+    await page.goto("https://playwright.dev/");
+
+    // Wait for the page to be fully loaded and animations to settle
+    await page.waitForLoadState("networkidle");
+
+    // Best Practice: Mask dynamic content (like version numbers or moving carousels)
+    // to prevent false positives in image comparison
+    // We will mask the main header text just as an example of the capability
+    await expect(page).toHaveScreenshot("playwright-homepage.png", {
+      mask: [page.locator(".hero__title")],
+      maxDiffPixels: 100, // Allow a tiny margin of error (e.g., anti-aliasing differences)
+    });
+  });
+});
+```
+
+_Note: Run `npx playwright test tests/phase5-visual-regression.spec.ts` twice. The first run creates the baseline image. The second run performs the actual comparison._
+
+#### Exercise 2: Fully Parallel Execution
+
+Create a new file `tests/phase5-parallel-execution.spec.ts` to demonstrate forcing parallel execution within a single file.
+
+```typescript
+import { test, expect } from "@playwright/test";
+
+// Best Practice: Opt-in to fully parallel mode for this specific test suite
+test.describe.configure({ mode: "parallel" });
+
+test.describe("Parallel Tests Block", () => {
+  test("Independent Test 1: Navigation", async ({ page }) => {
+    await page.goto("https://playwright.dev/");
+    await expect(page).toHaveTitle(/Playwright/);
+  });
+
+  test("Independent Test 2: Search UI", async ({ page }) => {
+    await page.goto("https://playwright.dev/");
+    const searchBtn = page.getByRole("button", { name: "Search" });
+    await expect(searchBtn).toBeVisible();
+  });
+
+  test("Independent Test 3: Footer Links", async ({ page }) => {
+    await page.goto("https://playwright.dev/");
+    const gitHubLink = page.getByRole("link", { name: "GitHub repository" });
+    await expect(gitHubLink).toBeVisible();
+  });
+});
+```
+
+#### Exercise 3: Setting up CI/CD (GitHub Actions)
+
+Create a new YAML file exactly at this path: `.github/workflows/playwright.yml`. If the folders do not exist, create them.
+
+```yaml
+name: Playwright Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        run: npx playwright test
+
+      - name: Upload Playwright HTML Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
 ```
