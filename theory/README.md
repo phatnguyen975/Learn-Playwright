@@ -946,7 +946,48 @@ test.describe("Parallel Tests Block", () => {
 });
 ```
 
-#### Exercise 3: Enterprise CI/CD Pipeline with Sharding (GitHub Actions)
+#### Exercise 3: Optimizing the Configuration File
+
+This is not a test file, but the central `playwright.config.ts` located at the root of your project. Update it to follow 2026 Best Practices for artifact collection.
+
+```typescript
+import { defineConfig, devices } from "@playwright/test";
+
+export default defineConfig({
+  testDir: "./tests",
+  // Run tests in files in parallel
+  fullyParallel: true,
+  // Fail the build on CI if you accidentally left test.only in the source code
+  forbidOnly: !!process.env.CI,
+  // Retry failing tests on CI only to handle network flakiness
+  retries: process.env.CI ? 2 : 0,
+  // Opt out of parallel tests on CI to avoid resource starvation
+  workers: process.env.CI ? 1 : undefined,
+  // Define the HTML reporter
+  reporter: "html",
+
+  use: {
+    // Collect trace when retrying the failed test
+    trace: "on-first-retry",
+
+    // Take a screenshot only when a test fails
+    screenshot: "only-on-failure",
+
+    // Record video only when a test fails
+    video: "retain-on-failure",
+  },
+
+  projects: [
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    // You can uncomment Firefox and WebKit for cross-browser testing
+  ],
+});
+```
+
+#### Exercise 4: Enterprise CI/CD Pipeline with Sharding (GitHub Actions)
 
 Running all tests on a single CI machine is a bottleneck. This advanced YAML uses GitHub Actions' `matrix` strategy to spin up 3 separate machines simultaneously (sharding), and a final job to merge their reports.
 
@@ -954,11 +995,12 @@ Create exactly at this path: `.github/workflows/playwright.yml`.
 
 ```yaml
 name: Playwright Enterprise Tests
+
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   # 1. THE TEST JOB (Runs on multiple machines in parallel)
@@ -971,8 +1013,8 @@ jobs:
         shardIndex: [1, 2, 3]
         shardTotal: [3]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: lts/*
 
@@ -983,7 +1025,6 @@ jobs:
         run: npx playwright install --with-deps
 
       - name: Run Playwright tests (Sharded)
-        # This command uses the matrix variables to split the workload
         run: npx playwright test --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
       - name: Upload blob report to GitHub Actions Artifacts
@@ -1000,8 +1041,8 @@ jobs:
     needs: [test]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: lts/*
 
